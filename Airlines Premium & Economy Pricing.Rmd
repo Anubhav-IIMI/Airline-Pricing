@@ -1,0 +1,494 @@
+---
+title: "Airline Ticket Pricing Analysis"
+date: "14 October 2019"
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(modelr)
+library(broom)
+library(car)
+library(ISLR)
+library(leaps)
+library(glmnet)
+library(corrplot)
+library(factoextra)
+
+
+
+```
+
+## Reading the dataset
+
+Data set is stored in the variable named 'airline'.
+
+
+```{r}
+airline=read.csv("SixAirlinesDataV2.csv",header=T)
+
+```
+```{r}
+dim(airline)
+```
+## Dataset Description
+```{r}
+summary(airline)
+```
+We can make the following observations from the above results:
+
+1. Flight Duration averages around 7.79 Hrs with minimum flight of 1 hr 15 mins and maximum time of 14 Hours.
+
+2. There are at an average 202 Seats in Economy Section and the seats range from 78 to 389.
+
+3. Premium Seats in each Aircraft average around 33.
+
+4. Total Seats range from 98 to 441.
+
+5. The average Price of Premium seats is around $1845.
+
+6. The Price of Economy Seats are lower, ranging around $1327.
+
+## Premium Seats Analysis
+```{r}
+aggregate(list(PercentPremium=airline$PercentPremiumSeats),list(name=airline$Airline),FUN=mean)
+
+```
+As we can see from the above data, the percentage of Premium Seats are around 10-18 % of the total seats with maximum % of premium seats available inn British Airways
+
+## Data Visualisation
+
+```{r}
+Economy<-aggregate(airline$SeatsEconomy,list(airline$Airline),mean)
+Premium<-aggregate(airline$SeatsPremium,list(airline$Airline),mean)
+Economy
+Premium
+
+attach(airline)
+
+boxplot(FlightDuration, main="Boxplot-Flight duration",
+        xlab="Flight duration", col="Green")
+```
+Comparing the number of seats in Premium and Economy:
+```{r}
+par(mfrow=c(1, 2))
+boxplot(SeatsEconomy, main="Boxplot-Seats Economy",
+        xlab="Seats Economy", col="Yellow")
+boxplot(SeatsPremium, main="Boxplot-Seats Premium",
+        xlab="Seats Premium", col="cyan")
+```
+Comparing distance between Consecutive Economy and Premium Seats:
+```{r}
+par(mfrow=c(1, 2))
+hist(PitchEconomy,xlab="Pitch Economy", col="yellow", 
+          main="Histogram for Pitch Economy")
+hist(PitchPremium,xlab="Pitch Premium", col="cyan",
+          main="Histogram for Pitch Premium")
+```
+Comparing Width between armrests between Economy and Premium Seats:
+```{r}
+par(mfrow=c(1, 2))
+hist(WidthEconomy, main="Histogram- Width Economy",
+        xlab="Width Economy", col="yellow")
+hist(WidthPremium, main="Boxplot-Width Premium",
+        xlab="Width Premium", col="cyan")
+```
+Comparing Prices of Economy and Premium Seat:
+```{r}
+par(mfrow=c(1, 2))
+boxplot(PriceEconomy, main="Boxplot-Seats Economy",
+        xlab="Economy Prices", col="yellow")
+boxplot(PricePremium, main="Boxplot-Seats Premium",
+        xlab="Premium Prices", col="cyan")
+```
+Now, we look at the Relationship of Premium and Economy Seats with the Airline.
+
+Flightwise Premium seats:
+```{r}
+airline %>%
+  ggplot(aes(x = Airline, y = SeatsPremium)) +
+  geom_boxplot(fill="maroon") + 
+  labs(y = "Premium Seats",title = "Airline vs Premium Seats")
+```
+Flightwise Economy seats:
+```{r}
+airline %>%
+  ggplot(aes(x = Airline, y = SeatsEconomy)) +
+  geom_boxplot(fill="orange") + 
+  labs(y = "Economy Seats",title = "Airline vs Economy Seats")
+
+```
+
+Flightwise Total seats:
+```{r}
+airline %>%
+  ggplot(aes(x = Airline, y = SeatsTotal)) +
+  geom_boxplot(fill="pink") + 
+  labs(y = "Total Seats",title = "Airline vs Total Seats")
+```
+
+Number of International and Domestic Flights
+```{r}
+
+ggplot(airline, aes(x = IsInternational)) +
+geom_bar(fill = "dark blue")+
+labs(x="Domestic/International", y = "Number of Flights",title = "Number of International and Domestic Flights")
+```
+
+Price Comparisons
+```{r}
+par(mfrow=c(2,1))
+airline %>%
+  ggplot(aes(x = Airline, y = PriceEconomy)) +
+  geom_boxplot(fill="Yellow") + 
+  labs(y = "Prices",title = "Airline vs Economy Price")
+airline %>%
+  ggplot(aes(x = Airline, y = PricePremium)) +
+  geom_boxplot(fill="Cyan") + 
+  labs(y = "Prices",title = "Airline vs Premium Price")
+```
+```{r}
+scatterplot(PricePremium,PriceEconomy,main="Economy Price vs Premium Price")
+```
+## Correlation between Variables
+```{r}
+corr01 <-cor(airline[,6:18])
+corr01[,7:8]
+```
+As we see above, we find the Various Correlations among all rows and Price of Economy and Price Of Premium Seats.
+
+```{r}
+corr_02<-airline[,3]+airline[,6:14]
+corrg<-round(cor(corr_02),2)
+corrg
+
+corrplot(corrg, method = "square")
+
+```
+## T-test
+
+Hypothesis: There is no effect of Airline on Price of Premium Seats and Economy Seats.
+
+To test the above hypothesis we run the T test.
+
+```{r}
+EcoPrice<-table(PriceEconomy)
+PremPrice<-table(PricePremium)
+AirComp<-table(Airline)
+t.test(EcoPrice,AirComp)
+t.test(PremPrice,AirComp)
+```
+Since the value of p is < 0.05, we can reject our null hypothesis that airlines do not play a significant role in pricing.
+
+
+## Multiple Regression
+
+Data is split in the ratio 7:3 as training and testing data respectively
+```{r}
+# Split the data into training and testing set
+set.seed(8885)
+dat.split <- resample_partition(airline, c(test = 0.3, train = 0.7))
+train <- as_tibble(dat.split$train)
+test <- as_tibble(dat.split$test)
+```
+
+For start we will take all the variables for regression for the Economy Class
+
+For Economy
+```{r}
+# Evaluation For the Economy class
+mod1 <- lm(PriceEconomy ~ SeatsEconomy+Airline+Aircraft+FlightDuration+TravelMonth+IsInternational
+           +PitchEconomy+WidthEconomy, data = train)
+summary(mod1)
+
+# Exploring R^2, MSE and F-statistic for Economy
+glance(mod1, train)
+```
+73.7% of the variation in Price of economy ticket can be explained with this model
+
+
+```{r}
+#Checking the Accuracy of the model
+MSE <- mse(mod1, train)
+MSE
+```
+
+
+Multiregression analysis by taking the variables which deal with the Premium Segment
+```{r}
+# Evaluation For the Premium class
+mod2 <- lm(PricePremium ~ SeatsPremium+Airline+Aircraft+FlightDuration+TravelMonth+IsInternational
+           +PitchPremium+WidthPremium, data = train)
+summary(mod2)
+
+# Exploring R^2, MSE and F-statistic for Economy
+glance(mod2, train)
+```
+66.2% of the variation in Price of premium ticket can be explained with this model
+
+
+
+```{r}
+#Checking the Accuracy of the model
+MSE <- mse(mod2, train)
+MSE
+```
+
+Lets compare it, when we take all the variables. Here we take try gauge the effect of variation of different parameters on the Price of the Economy Class of seats.
+
+# Economy
+```{r}
+#Using All the variables as predictor variables for Economy Class
+modE<- lm(PriceEconomy ~ ., data = train)
+#summary(modp)
+glance(modE, train)
+```
+
+# Premium
+Now we repeat to see the variation of different parameters taken with respect to the Premium Price.
+```{r}
+#Using All the variables as predictor variables for Premium Class
+modP<- lm(PricePremium ~ ., data = train)
+#summary(modp)
+glance(modP, train)
+```
+If we take all the varibles than more than 95% of the variation can be explained but the reson behind it is that, we have assumed that price of other seat is given. THis assumption seems wrong
+
+```{r}
+#Plot comparing mod1 & modE for Economy
+mod1_results <- augment(mod1, train) %>%
+  mutate(Model = "Model-1")
+
+mod2_results <- augment(modE, train) %>%
+  mutate(Model = "Model-2") %>%
+  rbind(mod1_results)
+
+ggplot(mod2_results, aes(.fitted, .resid)) +
+  geom_ref_line(h = 0) +
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  facet_wrap(~ Model) +
+  ggtitle("Model 1 vs Model E for Economy Class")
+```
+
+
+
+```{r}
+#Plot comparing mod1 & modE for Premium. This is to pictorially gauge the difference in the pricing schemes for Economy and Premium segments.
+mod1_results <- augment(mod2, train) %>%
+  mutate(Model = "Model-1")
+
+mod2_results <- augment(modP, train) %>%
+  mutate(Model = "Model-2") %>%
+  rbind(mod1_results)
+
+ggplot(mod2_results, aes(.fitted, .resid)) +
+  geom_ref_line(h = 0) +
+  geom_point() +
+  geom_smooth(se = FALSE) +
+  facet_wrap(~ Model) +
+  ggtitle("Model 1 vs Model P for Premium Class")
+```
+
+Explanation: As we can see in model 1 the dipersion of data points is more as compared to model 2 therefore we can say that model-2 is a better fit than model 1. But we have assumed that other price is given.
+
+
+## Finding best model
+
+
+#Best Subset
+```{r}
+#Via best subset approach
+best_subset <- regsubsets(PriceEconomy ~ SeatsEconomy+Airline+Aircraft+FlightDuration+TravelMonth+IsInternational
+                          +PitchEconomy+WidthEconomy, data = train, nvmax = 40)
+results <- summary(best_subset)
+results
+```
+
+1st Iteration : Fligh Duration
+
+2nd Iteration : Fligh Duration, Airline Singapore
+
+3rd Iteration : Fligh Duration, Airline Singapore, Pitch Economy
+
+4th Iteration : Fligh Duration, Airline Singapore, Pitch Economy, Is international or not
+
+5th Iteration : Fligh Duration, Airline British, Airline Jet, Width Economy, Is international or not
+
+From the above analysis, we can conclude that Flight Duration and airline is the most important factor for determining the price of economy
+
+Now, comparing values of adjusted R2, Cp and BIC for different variables
+```{r}
+# extract and plot results
+tibble(predictors = 1:14,
+       adj_R2 = results$adjr2,
+       Cp = results$cp,
+       BIC = results$bic) %>%
+  pivot_longer(-predictors, names_to = "statistic", values_to = "value") %>%
+  ggplot(aes(predictors, value, color = statistic)) +
+  geom_line(show.legend = F) +
+  geom_point(show.legend = F) +
+  facet_wrap(~ statistic, scales = "free")
+
+which.max(results$adjr2)
+coef(best_subset, which.max(results$adjr2))
+which.min(results$bic)
+coef(best_subset,which.min(results$bic))
+which.min(results$cp)
+coef(best_subset, which.min(results$cp))
+```
+
+Adjusted R2 method -> 10 variables are required
+
+Adjusted BIC method -> 8 variables are required
+
+Adjusted cp method -> 8 variables are required
+
+After this analysis, we can conclude that Airline, Aircraft, Flight Duration and isnationalornot are enough to predict.
+
+To verify it we have gone through lasso to see which variables are significant.
+# Using Lasso
+```{r}
+airline_train_x <- model.matrix(PriceEconomy ~ SeatsEconomy+Airline+Aircraft+FlightDuration+TravelMonth+IsInternational
+                             +PitchEconomy+WidthEconomy, data = train)[, -1]
+airline_train_y <- log(train$PriceEconomy)
+
+airline_test_x <- model.matrix(PriceEconomy ~ SeatsEconomy+Airline+Aircraft+FlightDuration+TravelMonth+IsInternational
+                            +PitchEconomy+WidthEconomy, data = test)[, -1]
+airline_test_y <- log(test$PriceEconomy)
+```
+
+# Lasso
+
+```{r}
+# Apply lasso regression to airlines data
+airline_lasso <- glmnet(x = airline_train_x, y = airline_train_y, alpha = 1)
+
+plot(airline_lasso, xvar = "lambda")
+```
+The colored lines indicate different predictor variables. As lambda increases, the coefficient of predictor variables is converging to 0. We see that the predictor variable corresponding to purple, blue and sky blue line is converging very slowly (implying they converge at high values of lambda)
+
+
+Now, we will use the cross validation approach to have a fair chance of appropriate training data set with lasso.
+
+```{r}
+# Apply CV lasso regression to airlines data
+airline_lasso <- cv.glmnet(x = airline_train_x, y = airline_train_y, alpha = 1)
+
+# plot results
+plot(airline_lasso)
+```
+
+In the process to find the penalty parameter lambda, we find min(MSE) and find the corresponding lambda. The first dashed line represent lambda value with min MSE which is at (-6.7) and largest lambda value within one standard error of min MSE which is at (-3.5)
+
+We see that as we constrain log(lamda) > -3.5, we see that the MSE value rises considerably. 
+
+```{r}
+min(airline_lasso$cvm)       # minimum MSE
+
+airline_lasso$lambda.min     # lambda for this min MSE
+```
+
+
+```{r}
+#Prediction performance of the fitted lasso regression model
+lasso.pred <- predict(airline_lasso, s = airline_lasso$lambda.min, newx = airline_test_x)
+mean((lasso.pred - airline_test_y)^2)
+
+lasso.pred2 <- predict(airline_lasso, s = airline_lasso$lambda.1se, newx = airline_test_x)
+mean((lasso.pred2 - airline_test_y)^2)
+```
+Deciding whether to use lambda corresponding to min or 1se 
+ 
+```{r}
+airline_lasso_min <- glmnet(
+  x = airline_train_x,
+  y = airline_train_y,
+  alpha = 1
+)
+
+plot(airline_lasso_min, xvar = "lambda")
+abline(v = log(airline_lasso$lambda.min), col = "red", lty = "dashed")
+abline(v = log(airline_lasso$lambda.1se), col = "red", lty = "dashed")
+```
+We see above that the test error in case of min and 1se is more or less similar (difference of 0.0032). However, when we use lambda corresponding to 1se, we see that there is considerable drop in the number of predictor variables (from around 14 to 8). Hence, we will use lambda corresponding to 1se.
+Therefore, though we are losing on the test error but we are working with a more compact set of variables.
+
+```{r}
+lasso_best <- glmnet(x = airline_train_x, y = airline_train_y, alpha = 1,lambda = airline_lasso$lambda.1se)
+coef(lasso_best)
+```
+As per lasso best fit, except airline Delta, Airline Virgin, TravelMonthJul, TravelMonthSep and WidthEconomy are not important predictors.
+
+# Top 10 Influential variables
+```{r}
+coef(airline_lasso, s = "lambda.min") %>%
+  tidy() %>%
+  filter(row != "(Intercept)") %>%
+  top_n(10, wt = abs(value)) %>%
+  ggplot(aes(value, reorder(row, value), color = value > 0)) +
+  geom_point(show.legend = FALSE) +
+  ggtitle("Top 10 influential variables") +
+  xlab("Coefficient") +
+  ylab(NULL)
+```
+
+```{r}
+#PCA Analysis
+dat <- airline[c(-4,-5)]
+dat <- dat[c(-1,-2)]
+dat <- scale(dat)
+pca.fit <- princomp(dat, scores = TRUE)
+names(pca.fit)
+
+# Standard deviations of loadings
+pca.fit$sdev
+
+# Variance of loadings
+var.pca.fit <- pca.fit$sdev^2
+var.pca.fit
+
+# Loadings matrix
+pca.fit$loadings
+
+
+# PC Scores
+head(pca.fit$scores)
+
+#Prediction Function
+head(predict(pca.fit, dat))
+
+#Proportion of Variance
+prop.ve <- var.pca.fit/sum(var.pca.fit)
+names(prop.ve) <- paste("PC",c(1:14),sep = "")
+prop.ve
+```
+
+
+Here the first principal component contains 31.5% of the variability, the second contains 23.9% of the variability.
+
+Thus, first 8 principal components can explain 96% of the variability
+
+```{r}
+#Visualization
+fviz_eig(pca.fit)
+
+#Visualization of Principal components
+fviz_pca_biplot(pca.fit)
+
+# Graph of variables
+fviz_pca_var(pca.fit, axes = c(1,2))
+
+fviz_pca_var(pca.fit, axes = c(2,3)) # PC2 vs PC3
+
+# Graph of individual observations
+fviz_pca_ind(pca.fit)
+
+
+```
+
+
